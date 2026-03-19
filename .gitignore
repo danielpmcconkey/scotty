@@ -1,0 +1,10 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Secrets
+.pgpass
+
+# OpenClaw state
+workspace/.openclaw/
