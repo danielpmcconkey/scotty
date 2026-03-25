@@ -37,6 +37,8 @@ NAS_HOST_PASS_ENTRY = "openclaw/scotty/nas-host"
 NAS_PORT = 5000
 REQUEST_TIMEOUT = 10
 
+MARCUS_TOKEN_PASS_ENTRY = "openclaw/marcus/youtube-token"
+
 # Alert thresholds (percent)
 DISK_WARN = 80
 DISK_RED = 90
@@ -386,6 +388,55 @@ def check_nas():
 
 
 # ---------------------------------------------------------------------------
+# Agent token checks
+# ---------------------------------------------------------------------------
+
+def check_marcus_youtube_token():
+    """Validate Marcus's YouTube OAuth refresh token via a token refresh request.
+
+    Uses raw HTTP — no Google client libraries required.
+    """
+    token_json_str = get_pass(MARCUS_TOKEN_PASS_ENTRY)
+    if not token_json_str:
+        return {"valid": False, "error": "Could not retrieve token from pass", "level": "red"}
+
+    try:
+        token_data = json.loads(token_json_str)
+    except json.JSONDecodeError as e:
+        return {"valid": False, "error": f"Token JSON parse error: {e}", "level": "red"}
+
+    refresh_token = token_data.get("refresh_token")
+    client_id = token_data.get("client_id")
+    client_secret = token_data.get("client_secret")
+    token_uri = token_data.get("token_uri", "https://oauth2.googleapis.com/token")
+
+    if not all([refresh_token, client_id, client_secret]):
+        return {"valid": False, "error": "Token missing required fields", "level": "red"}
+
+    try:
+        resp = requests.post(token_uri, data={
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }, timeout=REQUEST_TIMEOUT)
+
+        if resp.status_code == 200:
+            return {"valid": True, "level": "green"}
+
+        error_body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+        error_desc = error_body.get("error_description", error_body.get("error", f"HTTP {resp.status_code}"))
+        return {"valid": False, "error": error_desc, "level": "red"}
+
+    except requests.exceptions.Timeout:
+        return {"valid": False, "error": "Google token endpoint timed out", "level": "warning"}
+    except requests.exceptions.ConnectionError:
+        return {"valid": False, "error": "Could not reach Google token endpoint", "level": "warning"}
+    except Exception as e:
+        return {"valid": False, "error": str(e), "level": "red"}
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -405,6 +456,9 @@ def main():
 
     # NAS checks (isolated — NAS failure doesn't affect local results)
     report["nas"] = check_nas()
+
+    # Agent token checks
+    report["marcus_youtube_token"] = check_marcus_youtube_token()
 
     print(json.dumps(report, indent=2))
 
